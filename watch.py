@@ -16,7 +16,7 @@ import argparse
 import logging
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from k_one import client, config, notify, slots as slots_mod, state
 from k_one.slots import Slot
@@ -24,19 +24,24 @@ from k_one.slots import Slot
 log = logging.getLogger("k-one-watch")
 
 
-def _horizon(cfg: config.Config) -> tuple[date, date]:
-    """要覆盖的日期区间（含首尾）。店铺最早只能订明天，所以从明天起算。"""
+def _horizon(cfg: config.Config, until: date | None = None) -> tuple[date, date]:
+    """要覆盖的日期区间（含首尾）。店铺最早只能订明天，所以从明天起算。
+
+    ``until`` 用于 ``show --date``：查的那天若超出 horizon_days，就把抓取范围
+    延伸过去，否则会查不到。
+    """
     first = (slots_mod.now_jst() + timedelta(days=1)).date()
-    return first, first + timedelta(days=cfg.watch.horizon_days - 1)
+    last = first + timedelta(days=cfg.watch.horizon_days - 1)
+    return first, max(last, until) if until else last
 
 
-def _collect(cfg: config.Config) -> tuple[list[Slot], bool]:
+def _collect(cfg: config.Config, until: date | None = None) -> tuple[list[Slot], bool]:
     """抓取全部菜单 x 全部周次，返回（去重后的空位, 本轮是否完整）。
 
     某一周抓失败不会让整轮报废 —— 剩下的照常通知，但会把"不完整"传出去，
     调用方据此跳过 prune，免得把没抓到的条目误当成"已被抢走"。
     """
-    first_day, last_day = _horizon(cfg)
+    first_day, last_day = _horizon(cfg, until)
     found: list[Slot] = []
     complete = True
     requests = 0
@@ -75,8 +80,28 @@ def _collect(cfg: config.Config) -> tuple[list[Slot], bool]:
     return unique, complete
 
 
+def parse_day(text: str) -> date:
+    """把 ``10-03`` / ``10/3`` / ``2026-10-03`` 解析成日期。
+
+    只写月日时取**下一个**该日期（今年已经过了就算明年），符合"我想看 10 月 3 号"
+    的直觉。
+    """
+    raw = text.strip().replace("/", "-").replace(".", "-")
+    today = slots_mod.now_jst().date()
+    for fmt, has_year in (("%Y-%m-%d", True), ("%m-%d", False)):
+        try:
+            parsed = datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+        if has_year:
+            return parsed
+        day = parsed.replace(year=today.year)
+        return day if day >= today else parsed.replace(year=today.year + 1)
+    raise ValueError(f"看不懂的日期：{text!r}，可以写 10-03、10/3 或 2026-10-03")
+
+
 def _filtered(cfg: config.Config, all_slots: list[Slot]) -> list[Slot]:
-    first_day, last_day = _horizon(cfg)
+    first_day, last_day = _horizon(cfg, until)
     return slots_mod.apply_filters(
         all_slots,
         weekdays=cfg.watch.weekdays,
@@ -144,12 +169,28 @@ def cmd_check(args, cfg: config.Config) -> int:
 
 
 def cmd_show(args, cfg: config.Config) -> int:
-    all_slots, _ = _collect(cfg)
-    shown = all_slots if args.all else _filtered(cfg, all_slots)
+    day = None
+    if args.date:
+        try:
+            day = parse_day(args.date)
+        except ValueError as exc:
+            log.error("%s", exc)
+            return 2
 
-    if not shown:
-        print("当前没有空位" if args.all else "当前没有符合条件的空位")
-        return 0
+    all_slots, _ = _collect(cfg, until=day)
+
+    if day is not None:
+        # 指定了某一天就只按这天筛，不再套用 weekdays / hour 过滤 ——
+        # 问"10月3号有没有位置"想看的是那天的全部空档
+        shown = [s for s in all_slots if s.start.date() == day]
+        if not shown:
+            print(f"{day:%Y/%m/%d}（{slots_mod.weekday_ja(day)}）没有空位")
+            return 0
+    else:
+        shown = all_slots if args.all else _filtered(cfg, all_slots)
+        if not shown:
+            print("当前没有空位" if args.all else "当前没有符合条件的空位")
+            return 0
 
     by_menu: dict[str, list[Slot]] = {}
     for s in shown:
@@ -193,6 +234,11 @@ def main(argv: list[str] | None = None) -> int:
     p_show = sub.add_parser("show", help="列出当前空位")
     p_show.add_argument(
         "--all", action="store_true", help="忽略过滤条件，列出全部空位"
+    )
+    p_show.add_argument(
+        "--date",
+        metavar="日期",
+        help="只看某一天的全部空档，如 10-03 / 10/3 / 2026-10-03",
     )
     p_show.set_defaults(func=cmd_show)
 

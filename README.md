@@ -60,9 +60,23 @@ python watch.py check              # 抓取 → 比对 → 推送新空位（定
 python watch.py check --dry-run    # 只打印本轮会推什么，不推送、不写状态
 python watch.py show               # 列出当前所有符合条件的空位
 python watch.py show --all         # 连被过滤掉的也列出来，用于核对过滤条件
+python watch.py show --date 10-03  # 只看某一天的全部空档（10/3、2026-10-03 也认）
 python watch.py test-notify        # 给已配置的渠道发一条测试消息
 python -m unittest discover -s tests   # 跑单测（离线，用录好的响应快照）
 ```
+
+### 临时查某一天
+
+```
+$ python watch.py show --date 10-03
+
+【カット】2 个空位
+  10/3(土) 11:00-12:00 / 16:00-17:00
+```
+
+`--date` 只按那一天筛，不套用 `weekdays` / `hour_from` / `hour_to` ——
+问"10 月 3 号有没有位置"想看的是那天的全部空档。要查的日期超出 `horizon_days`
+时会自动把抓取范围延伸过去。只写月日则指**下一个**该日期（今年过了就算明年）。
 
 ## 配置
 

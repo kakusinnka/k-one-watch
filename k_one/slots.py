@@ -57,6 +57,11 @@ class Slot:
         return f"{d.month}/{d.day}({_WEEKDAY_JA[d.weekday()]}) {d:%H:%M}"
 
 
+def weekday_ja(day: date) -> str:
+    """``date(2026, 10, 3)`` -> ``"土"``，与店铺页面的写法一致。"""
+    return _WEEKDAY_JA[day.weekday()]
+
+
 def _parse_stamp(stamp: str) -> datetime:
     """``20260916130000`` -> JST datetime。"""
     return datetime.strptime(stamp, "%Y%m%d%H%M%S").replace(tzinfo=JST)
