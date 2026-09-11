@@ -1,0 +1,30 @@
+# k-one-watch 监控配置
+# 这个文件会进公开仓库 —— 绝不要在这里写任何密钥。
+# 密钥走 GitHub Secrets（云端）或本地 .env（见 .env.example）。
+
+[watch]
+# 要监控的菜单 ID。完整对照表见 README。
+# s0000A5844 = カット（剪发，60分）
+menus = ["s0000A5844"]
+
+# 从明天起往后看多少天
+horizon_days = 28
+
+# 只要这些星期几的空位。留空 [] = 不限。
+# 可写 mon/tue/wed/thu/fri/sat/sun
+weekdays = ["sat", "sun"]
+
+# 空位的「开始时间」落在 [hour_from, hour_to) 之内才算数
+hour_from = 10
+hour_to = 18
+
+# △「残りわずか」（剩余不多）是否也算空位
+include_few_left = true
+
+[notify]
+title = "K-ONE 有空位"
+booking_url = "https://airrsv.net/k-one111/calendar"
+
+# 同一个空位一直挂着没被抢走时，隔多久再提醒你一次（小时）。
+# 0 = 只在它第一次出现时提醒一次。
+renotify_after_hours = 24

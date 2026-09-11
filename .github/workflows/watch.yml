@@ -1,0 +1,55 @@
+name: watch
+
+on:
+  schedule:
+    # 每 15 分钟一轮。GitHub 的定时触发本身有 5~15 分钟延迟，属正常现象，
+    # 调更密也不会更准时。想省点就改成 '*/30 * * * *'。
+    - cron: '*/15 * * * *'
+  workflow_dispatch:        # 允许在 Actions 页面手动点一次
+
+concurrency:
+  # 上一轮没跑完就不要叠下一轮，否则会重复推送
+  group: k-one-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write           # 回写 state/seen.json 需要
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'   # 需要 3.11+ 的 tomllib；本项目零第三方依赖
+
+      - name: 查询空位并推送
+        env:
+          BARK_URL:       ${{ secrets.BARK_URL }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          SMTP_HOST:      ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:      ${{ secrets.SMTP_PORT }}
+          SMTP_USER:      ${{ secrets.SMTP_USER }}
+          SMTP_PASS:      ${{ secrets.SMTP_PASS }}
+          SMTP_TO:        ${{ secrets.SMTP_TO }}
+        run: python watch.py check
+
+      - name: 保存状态
+        # 上一步推送全挂时会以非 0 退出，那种情况下不该把空位记成"已通知"
+        if: success()
+        run: |
+          set -euo pipefail
+          git config user.name  "k-one-watch[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/seen.json
+          if git diff --cached --quiet; then
+            echo "状态无变化，不产生 commit"
+            exit 0
+          fi
+          git commit -m "chore(state): 更新已通知的空位 [skip ci]"
+          # 万一有并发的 push 抢先落地，rebase 一次再试
+          git push || (git pull --rebase --autostash && git push)
