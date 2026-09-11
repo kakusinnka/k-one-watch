@@ -30,37 +30,67 @@ class TestConfigured(unittest.TestCase):
 
 
 class TestSplitBarkUrl(unittest.TestCase):
+    KEY = "dK8sLp2QxV9mNt4RwZ7bYc"
+
     def test_app_copied_url(self):
         self.assertEqual(
-            notify.split_bark_url("https://api.day.app/AbC123"),
-            ("https://api.day.app", "AbC123"),
+            notify.split_bark_url(f"https://api.day.app/{self.KEY}"),
+            ("https://api.day.app", self.KEY),
         )
 
     def test_trailing_slash(self):
         self.assertEqual(
-            notify.split_bark_url("https://api.day.app/AbC123/"),
-            ("https://api.day.app", "AbC123"),
+            notify.split_bark_url(f"https://api.day.app/{self.KEY}/"),
+            ("https://api.day.app", self.KEY),
         )
 
     def test_bare_key(self):
         self.assertEqual(
-            notify.split_bark_url("AbC123"), ("https://api.day.app", "AbC123")
+            notify.split_bark_url(self.KEY), ("https://api.day.app", self.KEY)
         )
+
+    def test_example_body_text_is_ignored(self):
+        """App 里连示例文字一起复制是最常见的填法。
+
+        以前盲取最后一段，会把中文当成 key 拼进请求地址，导致
+        UnicodeEncodeError 整轮崩掉。
+        """
+        with self.assertLogs("k_one.notify", level="WARNING"):
+            got = notify.split_bark_url(f"https://api.day.app/{self.KEY}/推送内容")
+        self.assertEqual(got, ("https://api.day.app", self.KEY))
+
+    def test_example_title_and_body_are_ignored(self):
+        with self.assertLogs("k_one.notify", level="WARNING"):
+            got = notify.split_bark_url(
+                f"https://api.day.app/{self.KEY}/推送标题/推送内容"
+            )
+        self.assertEqual(got, ("https://api.day.app", self.KEY))
+
+    def test_resulting_url_is_ascii_safe(self):
+        base, key = notify.split_bark_url(
+            f"https://api.day.app/{self.KEY}/推送标题/推送内容"
+        )
+        f"{base}/push".encode("ascii")  # 不该抛 UnicodeEncodeError
 
     def test_self_hosted_with_subpath(self):
         self.assertEqual(
-            notify.split_bark_url("https://bark.example.com/sub/KeY9"),
-            ("https://bark.example.com/sub", "KeY9"),
+            notify.split_bark_url(f"https://bark.example.com/sub/{self.KEY}"),
+            ("https://bark.example.com/sub", self.KEY),
+        )
+
+    def test_push_suffix_is_tolerated(self):
+        self.assertEqual(
+            notify.split_bark_url(f"https://api.day.app/{self.KEY}/push"),
+            ("https://api.day.app", self.KEY),
         )
 
     def test_rejects_url_without_key(self):
         with self.assertRaises(notify.NotifyError):
             notify.split_bark_url("https://api.day.app")
 
-    def test_rejects_push_suffix(self):
-        # 把 /push 一起粘进来是常见误操作，宁可报错也别静默发到错地址
+    def test_rejects_non_ascii_only_path(self):
         with self.assertRaises(notify.NotifyError):
-            notify.split_bark_url("https://api.day.app/push")
+            notify.split_bark_url("https://api.day.app/推送内容")
 
     def test_rejects_empty(self):
         with self.assertRaises(notify.NotifyError):
@@ -88,10 +118,13 @@ class TestSendDispatch(unittest.TestCase):
         notify.CHANNELS.update(self.real)
 
     def _install(self, **behaviours):
+        """behaviours: 渠道名 -> False(成功) / True(NotifyError) / 异常实例"""
         notify.CHANNELS.clear()
         for name, should_fail in behaviours.items():
             def fn(msg, env, _name=name, _fail=should_fail):
                 self.calls.append(_name)
+                if isinstance(_fail, BaseException):
+                    raise _fail
                 if _fail:
                     raise notify.NotifyError("boom")
 
@@ -131,6 +164,17 @@ class TestSendDispatch(unittest.TestCase):
             ok = notify.send(notify.Message("T", "B"), env={}, echo=False)
         self.assertFalse(ok)
         self.assertEqual(self.calls, [])
+
+    def test_unexpected_exception_does_not_crash_the_run(self):
+        # 配错渠道（比如 BARK_URL 里混进中文）曾经让整个进程崩掉，
+        # 连带其它渠道也发不出去
+        self._install(a=UnicodeEncodeError("ascii", "x", 0, 1, "bad"), b=False)
+        with self.assertLogs("k_one.notify", level="ERROR"):
+            ok = notify.send(
+                notify.Message("T", "B"), env={"A": "1", "B": "1"}, echo=False
+            )
+        self.assertTrue(ok)
+        self.assertEqual(sorted(self.calls), ["a", "b"])
 
     def test_unconfigured_channel_is_skipped(self):
         self._install(a=False, b=False)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import smtplib
 import ssl
 import urllib.error
@@ -68,30 +69,45 @@ def _post_form(url: str, payload: dict) -> str:
 # --------------------------------------------------------------------------
 
 
+#: Bark 的 device key 是一串字母数字（通常 20~24 位）
+_BARK_KEY_RE = re.compile(r"[A-Za-z0-9]{8,}")
+
+
 def split_bark_url(value: str) -> tuple[str, str]:
     """把用户填的 BARK_URL 拆成（服务器地址, device_key）。
 
-    App 里复制出来的是 ``https://api.day.app/AbCdEf123456``，但也有人只粘 key，
-    或者自建服务器带子路径。这里都认。
+    App 里「复制」出来的往往连示例文字一起带上了，例如
+    ``https://api.day.app/<key>/推送标题/推送内容``。所以这里按 key 的形状去认，
+    而不是盲取最后一段 —— 否则中文会被当成 key 拼进请求地址。
+
+    只粘 key、自建服务器带子路径，也都认。
     """
     value = value.strip().rstrip("/")
     if not value:
         raise NotifyError("BARK_URL 是空的")
     if "://" not in value:
-        return "https://api.day.app", value  # 只粘了 key
+        value = "https://api.day.app/" + value.lstrip("/")
 
     parts = urllib.parse.urlsplit(value)
-    segments = [seg for seg in parts.path.split("/") if seg]
-    if not segments:
-        raise NotifyError(f"BARK_URL 里缺少 device key：{value!r}")
-    if segments[-1] == "push":  # 有人会把 /push 也一起粘进来
+    segments = [seg for seg in parts.path.split("/") if seg and seg != "push"]
+    key_positions = [
+        i for i, seg in enumerate(segments) if _BARK_KEY_RE.fullmatch(seg)
+    ]
+    if not key_positions:
         raise NotifyError(
-            f"BARK_URL 应该以你的 device key 结尾，而不是 /push：{value!r}"
+            f"BARK_URL 里找不到 device key（应该是一串字母数字）：{value!r}"
         )
+
+    at = key_positions[-1]
+    ignored = segments[at + 1 :]
+    if ignored:
+        # 多半是 App 里一起复制来的示例推送内容，不该进请求地址
+        log.warning("BARK_URL 末尾的 %s 已忽略，只用 device key", "/".join(ignored))
+
     base = urllib.parse.urlunsplit(
-        (parts.scheme, parts.netloc, "/".join(segments[:-1]), "", "")
+        (parts.scheme, parts.netloc, "/".join(segments[:at]), "", "")
     )
-    return base, segments[-1]
+    return base, segments[at]
 
 
 def send_bark(msg: Message, env: dict[str, str]) -> None:
@@ -213,6 +229,10 @@ def send(msg: Message, *, env: dict[str, str] | None = None, echo: bool = True) 
             fn(msg, env)
         except NotifyError as exc:
             log.error("推送到 %s 失败：%s", name, exc)
+        except Exception:
+            # 配错渠道（比如 URL 里混进了中文）不该把整轮监控带崩，
+            # 其它渠道该照发，状态该照走
+            log.exception("推送到 %s 时发生意外错误", name)
         else:
             ok += 1
             log.info("已推送到 %s", name)

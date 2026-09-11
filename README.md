@@ -25,7 +25,7 @@
 
 | 渠道 | 怎么拿 | 需要的环境变量 |
 |---|---|---|
-| **Bark**（iOS） | App Store 装 Bark，打开就能看到一个 URL | `BARK_URL`（形如 `https://api.day.app/AbCdEf123456`） |
+| **Bark**（iOS） | App Store 装 Bark，打开就能看到一个 URL | `BARK_URL`（形如 `https://api.day.app/AbCdEf123456`）<br>App 里连示例文字一起复制了也没关系，会自动只取 key |
 | **Server酱·Turbo**（微信） | [sct.ftqq.com](https://sct.ftqq.com/) 微信扫码登录拿 SendKey | `SERVERCHAN_KEY` |
 | **PushPlus**（微信） | [pushplus.plus](https://www.pushplus.plus/) 微信扫码拿 token | `PUSHPLUS_TOKEN` |
 | **邮件** | Gmail 需要生成**应用专用密码**（不是登录密码） | `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` `SMTP_TO` |
