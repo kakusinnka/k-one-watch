@@ -6,6 +6,15 @@ on:
     # 调更密也不会更准时。想省点就改成 '*/30 * * * *'。
     - cron: '*/15 * * * *'
   workflow_dispatch:        # 允许在 Actions 页面手动点一次
+    inputs:
+      mode:
+        description: 手动触发时做什么
+        type: choice
+        default: check
+        options:
+          - check        # 照常跑一轮，只推新空位
+          - force        # 无视已通知名单，把当前空位全部重推（验证推送链路）
+          - test-notify  # 只发一条测试消息，不查空位
 
 concurrency:
   # 上一轮没跑完就不要叠下一轮，否则会重复推送
@@ -36,7 +45,15 @@ jobs:
           SMTP_USER:      ${{ secrets.SMTP_USER }}
           SMTP_PASS:      ${{ secrets.SMTP_PASS }}
           SMTP_TO:        ${{ secrets.SMTP_TO }}
-        run: python watch.py check
+          MODE:           ${{ inputs.mode || 'check' }}
+        # 经 env 传入而不是直接内插，避免把输入拼进 shell
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            test-notify) python watch.py test-notify ;;
+            force)       python watch.py check --force ;;
+            *)           python watch.py check ;;
+          esac
 
       - name: 保存状态
         # 上一步推送全挂时会以非 0 退出，那种情况下不该把空位记成"已通知"

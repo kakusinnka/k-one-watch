@@ -43,6 +43,14 @@
 加完之后到 **Actions → watch → Run workflow** 手动点一次，确认手机能收到。
 之后它每 15 分钟自动跑一轮。
 
+手动触发时可以选模式（不想等真有新空位时用这个）：
+
+| 模式 | 作用 |
+|---|---|
+| `check` | 默认。照常跑一轮，只推新空位 —— 没新空位就不会响 |
+| `force` | 无视已通知名单，把当前符合条件的空位**全部重推**一遍，用来验证链路真的通到手机 |
+| `test-notify` | 只发一条测试消息，不查空位 |
+
 ### 3.（可选）本地也配一份
 
 ```bash
@@ -58,6 +66,7 @@ python watch.py test-notify
 ```bash
 python watch.py check              # 抓取 → 比对 → 推送新空位（定时任务跑的就是这个）
 python watch.py check --dry-run    # 只打印本轮会推什么，不推送、不写状态
+python watch.py check --force      # 无视已通知名单，把当前空位全部重推一遍
 python watch.py show               # 列出当前所有符合条件的空位
 python watch.py show --all         # 连被过滤掉的也列出来，用于核对过滤条件
 python watch.py show --date 10-03  # 只看某一天的全部空档（10/3、2026-10-03 也认）

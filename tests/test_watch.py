@@ -112,5 +112,26 @@ class TestCompose(unittest.TestCase):
         self.assertIn("残りわずか", msg.body)
 
 
+class TestCheckArgs(unittest.TestCase):
+    """--force 要真的被解析出来，否则工作流里的 force 模式静默退化成普通 check。"""
+
+    def _parse(self, argv):
+        parser = watch.build_parser()
+        return parser.parse_args(argv)
+
+    def test_force_defaults_off(self):
+        self.assertFalse(self._parse(["check"]).force)
+
+    def test_force_flag(self):
+        self.assertTrue(self._parse(["check", "--force"]).force)
+
+    def test_dry_run_and_force_coexist(self):
+        args = self._parse(["check", "--dry-run", "--force"])
+        self.assertTrue(args.dry_run and args.force)
+
+    def test_show_date_flag(self):
+        self.assertEqual(self._parse(["show", "--date", "10-03"]).date, "10-03")
+
+
 if __name__ == "__main__":
     unittest.main()

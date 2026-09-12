@@ -137,9 +137,15 @@ def cmd_check(args, cfg: config.Config) -> int:
     log.info("符合条件的空位 %d 个", len(current))
 
     seen = state.load(config.STATE_PATH)
-    to_notify = state.select_new(
-        current, seen, renotify_after_hours=cfg.notify.renotify_after_hours
-    )
+    if args.force:
+        # 无视"已通知"名单，把当前符合条件的全部重推一遍。
+        # 用来端到端验证推送链路是否真的通到手机。
+        log.info("--force：忽略已通知名单")
+        to_notify = current
+    else:
+        to_notify = state.select_new(
+            current, seen, renotify_after_hours=cfg.notify.renotify_after_hours
+        )
 
     if not to_notify:
         print(f"无新增空位（当前符合条件的空位 {len(current)} 个）")
@@ -218,7 +224,7 @@ def cmd_test_notify(args, cfg: config.Config) -> int:
     return 0 if notify.send(msg, echo=True) else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="watch.py", description="监控 K-ONE 预约空位（只读，不会替你预约）"
     )
@@ -228,6 +234,11 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser("check", help="抓取并推送新出现的空位")
     p_check.add_argument(
         "--dry-run", action="store_true", help="只打印会推什么，不推送也不写状态"
+    )
+    p_check.add_argument(
+        "--force",
+        action="store_true",
+        help="无视已通知名单，把当前符合条件的空位全部重推一遍（用于验证推送链路）",
     )
     p_check.set_defaults(func=cmd_check)
 
@@ -244,8 +255,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_test = sub.add_parser("test-notify", help="给已配置的渠道发测试消息")
     p_test.set_defaults(func=cmd_test_notify)
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
