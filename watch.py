@@ -101,7 +101,7 @@ def parse_day(text: str) -> date:
 
 
 def _filtered(cfg: config.Config, all_slots: list[Slot]) -> list[Slot]:
-    first_day, last_day = _horizon(cfg, until)
+    first_day, last_day = _horizon(cfg)
     return slots_mod.apply_filters(
         all_slots,
         weekdays=cfg.watch.weekdays,

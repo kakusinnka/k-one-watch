@@ -85,7 +85,7 @@ $ python watch.py show --date 10-03
 ```toml
 [watch]
 menus = ["s0000A5844"]      # 要监控的菜单，见下表
-horizon_days = 28           # 从明天起往后看多少天
+horizon_days = 14           # 从明天起往后看多少天（14 = 滚动两周）
 weekdays = ["sat", "sun"]   # 只要周末；写 [] 表示不限
 hour_from = 10              # 空位开始时间 >= 10:00
 hour_to = 18                # 空位开始时间 < 18:00
@@ -137,7 +137,7 @@ GET https://airrsv.net/k-one111/stateful/calendar/staff/searchStaffMenuResrc
 - 服务端会把请求窗口**夹到可预约期内**（请求 9/13 起的一周，实际返回 9/14–9/20），
   所以翻页游标按**实际返回的末日**推进，不能盲目按 7 天步进
 
-对站点的负担：默认配置下约 4 次请求/轮 × 96 轮/天 ≈ 400 次/天，请求之间间隔 1.5 秒。
+对站点的负担：默认配置下约 2 次请求/轮 × 96 轮/天 ≈ 200 次/天，请求之间间隔 1.5 秒。
 想再轻一点就调大 cron 间隔或调小 `horizon_days`。
 
 状态记在 [`state/seen.json`](state/seen.json)：同一个空位只提醒你一次
