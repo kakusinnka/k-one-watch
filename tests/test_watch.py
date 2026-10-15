@@ -38,6 +38,10 @@ def cfg(**overrides) -> config.Config:
     return c
 
 
+WEEKEND = config.Rule(weekdays=["sat", "sun"], hour_from=10, hour_to=18)
+AFTER_WORK = config.Rule(weekdays=[], hour_from=17, hour_to=18)
+
+
 class TestHorizon(unittest.TestCase):
     def test_starts_tomorrow(self):
         # 店铺最早只能订明天，今天的格子点不动
@@ -64,27 +68,39 @@ class TestFiltered(unittest.TestCase):
 
     def test_runs_without_until_argument(self):
         with at(2026, 9, 12):
-            got = watch._filtered(cfg(horizon_days=14), [slot("2026092011")])
+            got = watch._filtered(
+                cfg(horizon_days=14, rules=[WEEKEND]), [slot("2026092011")]
+            )
         self.assertEqual(len(got), 1)
 
-    def test_weekend_filter(self):
+    def test_weekend_rule(self):
         with at(2026, 9, 12):
             got = watch._filtered(
-                cfg(horizon_days=14),
+                cfg(horizon_days=14, rules=[WEEKEND]),
                 [slot("2026091813"), slot("2026092011")],  # 9/18 金, 9/20 日
             )
         self.assertEqual([s.start.day for s in got], [20])
 
+    def test_after_work_rule_catches_weekday_evening(self):
+        with at(2026, 9, 12):
+            got = watch._filtered(
+                cfg(horizon_days=14, rules=[WEEKEND, AFTER_WORK]),
+                [slot("2026091813"), slot("2026091817")],  # 9/18 金 13点 / 17点
+            )
+        self.assertEqual([s.start.hour for s in got], [17])
+
     def test_drops_slots_beyond_horizon(self):
         # 10/3 是周六，但超出了 14 天窗口
         with at(2026, 9, 12):
-            got = watch._filtered(cfg(horizon_days=14), [slot("2026100311")])
+            got = watch._filtered(
+                cfg(horizon_days=14, rules=[WEEKEND]), [slot("2026100311")]
+            )
         self.assertEqual(got, [])
 
     def test_drops_slots_outside_hours(self):
         with at(2026, 9, 12):
             got = watch._filtered(
-                cfg(horizon_days=14, hour_from=10, hour_to=18),
+                cfg(horizon_days=14, rules=[WEEKEND]),
                 [slot("2026092009"), slot("2026092018")],
             )
         self.assertEqual(got, [])
@@ -128,6 +144,15 @@ class TestCheckArgs(unittest.TestCase):
     def test_dry_run_and_force_coexist(self):
         args = self._parse(["check", "--dry-run", "--force"])
         self.assertTrue(args.dry_run and args.force)
+
+    def test_repeat_defaults_to_single_round(self):
+        args = self._parse(["check"])
+        self.assertEqual(args.repeat, 1)
+        self.assertEqual(args.interval, 180)
+
+    def test_repeat_and_interval(self):
+        args = self._parse(["check", "--repeat", "8", "--interval", "180"])
+        self.assertEqual((args.repeat, args.interval), (8, 180))
 
     def test_show_date_flag(self):
         self.assertEqual(self._parse(["show", "--date", "10-03"]).date, "10-03")

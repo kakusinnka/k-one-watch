@@ -85,44 +85,85 @@ class TestWeekdayMask(unittest.TestCase):
         self.assertIn("satrday", str(ctx.exception))
 
 
+class _Rule:
+    """测试用的轻量规则，字段与 config.Rule 一致。"""
+
+    def __init__(self, weekdays=(), hour_from=10, hour_to=18):
+        self.weekdays = list(weekdays)
+        self.hour_from = hour_from
+        self.hour_to = hour_to
+
+
+WEEKEND = _Rule(weekdays=["sat", "sun"], hour_from=10, hour_to=18)
+AFTER_WORK = _Rule(weekdays=[], hour_from=17, hour_to=18)
+ANYTIME = _Rule(weekdays=[], hour_from=10, hour_to=18)
+
+
+class TestMatches(unittest.TestCase):
+    def test_weekday_restriction(self):
+        sunday = slot("20260927120000")
+        self.assertTrue(m.matches(sunday, weekdays=["sun"], hour_from=10, hour_to=18))
+        self.assertFalse(m.matches(sunday, weekdays=["sat"], hour_from=10, hour_to=18))
+
+    def test_empty_weekdays_means_any_day(self):
+        friday = slot("20260925170000")
+        self.assertTrue(m.matches(friday, weekdays=[], hour_from=17, hour_to=18))
+
+    def test_hour_window_is_half_open(self):
+        self.assertTrue(
+            m.matches(slot("20260925170000"), weekdays=[], hour_from=17, hour_to=18)
+        )
+        self.assertFalse(
+            m.matches(slot("20260925180000"), weekdays=[], hour_from=17, hour_to=18)
+        )
+
+
 class TestApplyFilters(unittest.TestCase):
     def setUp(self):
         self.parsed = m.parse(load_fixture())
         self.base = dict(
-            weekdays=["sat", "sun"],
-            hour_from=10,
-            hour_to=18,
             include_few_left=True,
             date_from=date(2026, 9, 13),
             date_to=date(2026, 10, 11),
         )
 
-    def test_weekend_only_keeps_sunday_slots(self):
-        # 这一周 9/26(土) 全满，只剩 9/27(日) 的 12/13/15 点
-        kept = m.apply_filters(self.parsed, **self.base)
+    def test_weekend_rule_keeps_only_sunday_slots(self):
+        # fixture 那周 9/26(土) 全满，只剩 9/27(日) 的 12/13/15 点
+        kept = m.apply_filters(self.parsed, rules=[WEEKEND], **self.base)
         self.assertEqual(
             [s.start.strftime("%m%d%H") for s in kept], ["092712", "092713", "092715"]
         )
 
-    def test_no_weekday_restriction_keeps_all(self):
-        kept = m.apply_filters(self.parsed, **{**self.base, "weekdays": []})
+    def test_unrestricted_rule_keeps_all(self):
+        kept = m.apply_filters(self.parsed, rules=[ANYTIME], **self.base)
         self.assertEqual(len(kept), 17)
 
-    def test_hour_window_is_half_open(self):
-        kept = m.apply_filters(
-            self.parsed, **{**self.base, "weekdays": [], "hour_from": 15, "hour_to": 16}
-        )
-        self.assertTrue(all(s.start.hour == 15 for s in kept))
+    def test_rules_are_ored_together(self):
+        """周末全天 + 每天 17:00 —— 单一时间段表达不了这个组合。"""
+        kept = m.apply_filters(self.parsed, rules=[WEEKEND, AFTER_WORK], **self.base)
+        stamps = [s.start.strftime("%m%d%H") for s in kept]
+        self.assertIn("092712", stamps)   # 周日白天，命中「周末全天」
+        self.assertIn("092417", stamps)   # 周四 17 点，命中「下班后」
+        self.assertIn("092517", stamps)   # 周五 17 点，命中「下班后」
+        self.assertNotIn("092410", stamps)  # 周四 10 点，两条都不命中
+
+    def test_no_duplicates_when_both_rules_match(self):
+        # 周日 17:00 同时命中两条规则，不能推两遍
+        both = [slot("20260927170000")]
+        kept = m.apply_filters(both, rules=[WEEKEND, AFTER_WORK], **self.base)
+        self.assertEqual(len(kept), 1)
+
+    def test_result_keeps_chronological_order(self):
+        kept = m.apply_filters(self.parsed, rules=[WEEKEND, AFTER_WORK], **self.base)
+        self.assertEqual(kept, sorted(kept))
 
     def test_date_range_is_inclusive_on_both_ends(self):
         only_27 = m.apply_filters(
             self.parsed,
-            **{
-                **self.base,
-                "weekdays": [],
-                "date_from": date(2026, 9, 27),
-                "date_to": date(2026, 9, 27),
-            },
+            rules=[ANYTIME],
+            include_few_left=True,
+            date_from=date(2026, 9, 27),
+            date_to=date(2026, 9, 27),
         )
         self.assertEqual(len(only_27), 3)
 
@@ -130,14 +171,23 @@ class TestApplyFilters(unittest.TestCase):
         self.assertEqual(
             m.apply_filters(
                 self.parsed,
-                **{**self.base, "date_from": date(2026, 10, 1), "date_to": date(2026, 10, 5)},
+                rules=[ANYTIME],
+                include_few_left=True,
+                date_from=date(2026, 10, 1),
+                date_to=date(2026, 10, 5),
             ),
             [],
         )
 
     def test_can_drop_few_left(self):
         mixed = [slot("20260927120000"), slot("20260927130000", m.MARK_FEW_LEFT)]
-        kept = m.apply_filters(mixed, **{**self.base, "include_few_left": False})
+        kept = m.apply_filters(
+            mixed,
+            rules=[WEEKEND],
+            include_few_left=False,
+            date_from=date(2026, 9, 13),
+            date_to=date(2026, 10, 11),
+        )
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0].start.hour, 12)
 

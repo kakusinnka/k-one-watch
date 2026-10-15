@@ -7,25 +7,36 @@
 # s0000A5844 = カット（剪发，60分）
 menus = ["s0000A5844"]
 
-# 从明天起往后看多少天。14 = 滚动两周（约等于"本周剩下的 + 下周"）。
+# 从明天起往后看多少天。
+# 35 天是有依据的：周末档期提前三周以上就被订满，窗口太短根本够不到。
 # 每 7 天对应一次接口请求，所以这个值也决定每轮的请求量。
-horizon_days = 14
-
-# 只要这些星期几的空位。留空 [] = 不限。
-# 可写 mon/tue/wed/thu/fri/sat/sun
-weekdays = ["sat", "sun"]
-
-# 空位的「开始时间」落在 [hour_from, hour_to) 之内才算数
-hour_from = 10
-hour_to = 18
+horizon_days = 35
 
 # △「残りわずか」（剩余不多）是否也算空位
 include_few_left = true
+
+# 筛选规则，命中「任意一条」就算符合条件。
+# hour_from / hour_to 针对空位的开始时间，半开区间 [from, to)。
+# 店铺营业 10:00-18:00（14-15 休息），周一周二定休，所以最晚能订 17:00 那一档。
+
+# 周末不挑时间，有就想知道
+[[watch.rules]]
+name = "周末全天"
+weekdays = ["sat", "sun"]
+hour_from = 10
+hour_to = 18
+
+# 平日下班后那一档。weekdays 留空 = 不限星期（周末的 17:00 已被上面覆盖）
+[[watch.rules]]
+name = "下班后 17 点"
+weekdays = []
+hour_from = 17
+hour_to = 18
 
 [notify]
 title = "K-ONE 有空位"
 booking_url = "https://airrsv.net/k-one111/calendar"
 
-# 同一个空位一直挂着没被抢走时，隔多久再提醒你一次（小时）。
+# 同一个空位一直挂着时，隔多久再提醒你一次（小时）。
 # 0 = 只在它第一次出现时提醒一次。
 renotify_after_hours = 24

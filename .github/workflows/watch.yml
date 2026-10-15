@@ -2,9 +2,10 @@ name: watch
 
 on:
   schedule:
-    # 每 15 分钟一轮。GitHub 的定时触发本身有 5~15 分钟延迟，属正常现象，
-    # 调更密也不会更准时。想省点就改成 '*/30 * * * *'。
-    - cron: '*/15 * * * *'
+    # 实测：配 */15 时 GitHub 只执行了约 5%（100 次 run 平均间隔 289 分钟）。
+    # 它是按比例丢弃的，所以多申请能换来多一点实际执行 —— 公开仓库分钟数免费。
+    # 真正的补偿手段是下面的 --repeat：让每次被叫醒的 run 覆盖 20 多分钟。
+    - cron: '*/5 * * * *'
   workflow_dispatch:        # 允许在 Actions 页面手动点一次
     inputs:
       mode:
@@ -27,7 +28,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 容得下 8 轮 x 180 秒的轮询循环
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -52,12 +54,15 @@ jobs:
           case "$MODE" in
             test-notify) python watch.py test-notify ;;
             force)       python watch.py check --force ;;
-            *)           python watch.py check ;;
+            *)           python watch.py check --repeat 8 --interval 180 ;;
           esac
 
       - name: 保存状态
-        # 上一步推送全挂时会以非 0 退出，那种情况下不该把空位记成"已通知"
-        if: success()
+        # 即使上一步以非 0 退出也要保存：--repeat 连跑多轮，某一轮推送失败不该
+        # 让前面几轮已经送达的记录丢掉（丢了下一次会重推一遍）。
+        # "没送达不记状态"由代码本身保证，不依赖这个 if。
+        # 排除 cancelled()：被取消的 job 状态可能只写了一半。
+        if: success() || failure()
         run: |
           set -euo pipefail
           git config user.name  "k-one-watch[bot]"

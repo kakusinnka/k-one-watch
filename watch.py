@@ -104,9 +104,7 @@ def _filtered(cfg: config.Config, all_slots: list[Slot]) -> list[Slot]:
     first_day, last_day = _horizon(cfg)
     return slots_mod.apply_filters(
         all_slots,
-        weekdays=cfg.watch.weekdays,
-        hour_from=cfg.watch.hour_from,
-        hour_to=cfg.watch.hour_to,
+        rules=cfg.watch.rules,
         include_few_left=cfg.watch.include_few_left,
         date_from=first_day,
         date_to=last_day,
@@ -131,7 +129,7 @@ def _compose(cfg: config.Config, to_notify: list[Slot]) -> notify.Message:
     )
 
 
-def cmd_check(args, cfg: config.Config) -> int:
+def _check_once(args, cfg: config.Config) -> int:
     all_slots, complete = _collect(cfg)
     current = _filtered(cfg, all_slots)
     log.info("符合条件的空位 %d 个", len(current))
@@ -172,6 +170,26 @@ def cmd_check(args, cfg: config.Config) -> int:
         state.save(config.STATE_PATH, updated)
         log.info("状态已更新：%d 条", len(updated))
     return 0
+
+
+def cmd_check(args, cfg: config.Config) -> int:
+    """跑一轮或连跑多轮。
+
+    连跑多轮是为了对抗 GitHub 的定时节流 —— 它对 */15 实际只执行约 5%（实测
+    平均 289 分钟一次）。既然"什么时候被叫醒"控制不了，就让每次被叫醒的 run
+    覆盖一段时间，而不是一个瞬间。
+    """
+    rounds = max(1, args.repeat)
+    if rounds > 1:
+        log.info("本次连跑 %d 轮，每轮间隔 %d 秒", rounds, args.interval)
+
+    worst = 0
+    for i in range(rounds):
+        if i:
+            time.sleep(args.interval)
+            log.info("--- 第 %d/%d 轮 ---", i + 1, rounds)
+        worst = max(worst, _check_once(args, cfg))
+    return worst
 
 
 def cmd_show(args, cfg: config.Config) -> int:
@@ -239,6 +257,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="无视已通知名单，把当前符合条件的空位全部重推一遍（用于验证推送链路）",
+    )
+    p_check.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="一次调用里连跑 N 轮，用来让单次 CI 触发覆盖一段时间（默认 1）",
+    )
+    p_check.add_argument(
+        "--interval",
+        type=int,
+        default=180,
+        metavar="秒",
+        help="--repeat 时每轮之间的间隔秒数（默认 180）",
     )
     p_check.set_defaults(func=cmd_check)
 

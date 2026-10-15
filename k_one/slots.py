@@ -121,30 +121,43 @@ def weekday_mask(names: list[str]) -> set[int] | None:
     return mask
 
 
+def matches(slot: Slot, *, weekdays: list[str], hour_from: int, hour_to: int) -> bool:
+    """这个空位是否命中某一条规则。``weekdays`` 为空表示不限星期。"""
+    mask = weekday_mask(weekdays)
+    if mask is not None and slot.start.weekday() not in mask:
+        return False
+    return hour_from <= slot.start.hour < hour_to
+
+
 def apply_filters(
     slots: list[Slot],
     *,
-    weekdays: list[str],
-    hour_from: int,
-    hour_to: int,
+    rules: list,
     include_few_left: bool,
     date_from: date,
     date_to: date,
 ) -> list[Slot]:
-    """按星期 / 小时 / 日期区间 / ○△ 过滤。``date_to`` 含当天。"""
-    mask = weekday_mask(weekdays)
+    """按日期区间 + 规则 + ○△ 过滤。``date_to`` 含当天。
+
+    ``rules`` 之间是**或**的关系 —— 命中任意一条就留下。这样「周末全天」和
+    「每天 17:00」可以并存，而单一时间段表达不了。
+    """
+    masks = [
+        (weekday_mask(r.weekdays), r.hour_from, r.hour_to) for r in rules
+    ]
     kept = []
     for s in slots:
         day = s.start.date()
         if not (date_from <= day <= date_to):
             continue
-        if mask is not None and s.start.weekday() not in mask:
-            continue
-        if not (hour_from <= s.start.hour < hour_to):
-            continue
         if s.few_left and not include_few_left:
             continue
-        kept.append(s)
+        for mask, hour_from, hour_to in masks:
+            if mask is not None and s.start.weekday() not in mask:
+                continue
+            if hour_from <= s.start.hour < hour_to:
+                kept.append(s)
+                break
     return kept
 
 

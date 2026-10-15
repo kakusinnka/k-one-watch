@@ -19,13 +19,38 @@ STATE_PATH = ROOT / "state" / "seen.json"
 
 
 @dataclass
-class WatchConfig:
-    menus: list[str] = field(default_factory=lambda: ["s0000A5844"])
-    horizon_days: int = 28
-    weekdays: list[str] = field(default_factory=lambda: ["sat", "sun"])
+class Rule:
+    """一条筛选规则：某些星期的某个时间段。
+
+    ``weekdays`` 留空表示不限星期。``hour_from``/``hour_to`` 针对空位的**开始
+    时间**，半开区间 ``[hour_from, hour_to)`` —— 所以「只要 17:00 那一档」写成
+    ``hour_from = 17`` / ``hour_to = 18``。
+    """
+
+    name: str = ""
+    weekdays: list[str] = field(default_factory=list)
     hour_from: int = 10
     hour_to: int = 18
+
+    def describe(self) -> str:
+        who = "/".join(self.weekdays) if self.weekdays else "每天"
+        return self.name or f"{who} {self.hour_from}:00-{self.hour_to}:00"
+
+
+def _default_rules() -> list[Rule]:
+    return [
+        Rule(name="周末全天", weekdays=["sat", "sun"], hour_from=10, hour_to=18),
+        Rule(name="下班后", weekdays=[], hour_from=17, hour_to=18),
+    ]
+
+
+@dataclass
+class WatchConfig:
+    menus: list[str] = field(default_factory=lambda: ["s0000A5844"])
+    horizon_days: int = 35
     include_few_left: bool = True
+    #: 命中**任意一条**规则就算符合条件
+    rules: list[Rule] = field(default_factory=_default_rules)
 
 
 @dataclass
@@ -57,8 +82,19 @@ def load_config(path: Path | None = None) -> Config:
     if not path.exists():
         return Config()
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
+
+    watch_raw = dict(raw.get("watch", {}))
+    rules_raw = watch_raw.pop("rules", None)
+    watch = WatchConfig(**_known_fields(WatchConfig, watch_raw, "watch"))
+    if rules_raw is not None:
+        if not isinstance(rules_raw, list) or not rules_raw:
+            raise ValueError("config.toml: [[watch.rules]] 至少要有一条")
+        watch.rules = [
+            Rule(**_known_fields(Rule, r, "watch.rules")) for r in rules_raw
+        ]
+
     cfg = Config(
-        watch=WatchConfig(**_known_fields(WatchConfig, raw.get("watch", {}), "watch")),
+        watch=watch,
         notify=NotifyConfig(**_known_fields(NotifyConfig, raw.get("notify", {}), "notify")),
     )
     _validate(cfg)
@@ -66,20 +102,24 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def _validate(cfg: Config) -> None:
+    from . import slots  # 避免循环导入
+
     w = cfg.watch
     if not w.menus:
         raise ValueError("config.toml: [watch].menus 不能为空")
     if w.horizon_days < 1:
         raise ValueError("config.toml: [watch].horizon_days 至少是 1")
-    if not 0 <= w.hour_from < w.hour_to <= 24:
-        raise ValueError(
-            f"config.toml: 需要 0 <= hour_from < hour_to <= 24，"
-            f"当前是 {w.hour_from} / {w.hour_to}"
-        )
-    # weekdays 拼写错误在这里就炸掉，而不是跑到云端才发现过滤全空
-    from . import slots
-
-    slots.weekday_mask(w.weekdays)
+    if not w.rules:
+        raise ValueError("config.toml: [[watch.rules]] 至少要有一条")
+    for rule in w.rules:
+        if not 0 <= rule.hour_from < rule.hour_to <= 24:
+            raise ValueError(
+                f"config.toml: 规则「{rule.describe()}」需要 "
+                f"0 <= hour_from < hour_to <= 24，当前是 "
+                f"{rule.hour_from} / {rule.hour_to}"
+            )
+        # 星期拼错在这里就炸掉，而不是跑到云端才发现筛出来永远是空
+        slots.weekday_mask(rule.weekdays)
 
 
 def load_dotenv(path: Path | None = None) -> None:

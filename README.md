@@ -67,6 +67,7 @@ python watch.py test-notify
 python watch.py check              # 抓取 → 比对 → 推送新空位（定时任务跑的就是这个）
 python watch.py check --dry-run    # 只打印本轮会推什么，不推送、不写状态
 python watch.py check --force      # 无视已通知名单，把当前空位全部重推一遍
+python watch.py check --repeat 8 --interval 180   # 连跑 8 轮，覆盖约 24 分钟
 python watch.py show               # 列出当前所有符合条件的空位
 python watch.py show --all         # 连被过滤掉的也列出来，用于核对过滤条件
 python watch.py show --date 10-03  # 只看某一天的全部空档（10/3、2026-10-03 也认）
@@ -94,11 +95,23 @@ $ python watch.py show --date 10-03
 ```toml
 [watch]
 menus = ["s0000A5844"]      # 要监控的菜单，见下表
-horizon_days = 14           # 从明天起往后看多少天（14 = 滚动两周）
-weekdays = ["sat", "sun"]   # 只要周末；写 [] 表示不限
-hour_from = 10              # 空位开始时间 >= 10:00
-hour_to = 18                # 空位开始时间 < 18:00
+horizon_days = 35           # 从明天起往后看多少天
 include_few_left = true     # △「残りわずか」也算空位
+
+# 筛选规则，命中「任意一条」就算符合条件。
+# hour_from / hour_to 针对空位的开始时间，半开区间 [from, to)。
+
+[[watch.rules]]
+name = "周末全天"
+weekdays = ["sat", "sun"]   # 留空 [] = 不限星期
+hour_from = 10
+hour_to = 18
+
+[[watch.rules]]
+name = "下班后 17 点"
+weekdays = []               # 每天
+hour_from = 17
+hour_to = 18
 
 [notify]
 title = "K-ONE 有空位"
@@ -128,7 +141,25 @@ renotify_after_hours = 24   # 空位一直挂着时隔多久再提醒一次；0 
 ### 店铺作息
 
 营业 **10:00–18:00**（14:00–15:00 休息），**周一、周二定休**，可预约窗口约 2 个月，
-最早只能订明天。所以 `weekdays` 里写 `mon`/`tue` 不会有任何结果。
+最早只能订明天。所以规则里写 `mon`/`tue` 不会有任何结果。
+剪发 60 分钟，所以**最晚能订 17:00 那一档**。
+
+### 为什么 horizon_days 不能太短
+
+实测过一次：把窗口设成 14 天 + 只要周末，结果一个多月没收到任何通知。
+扫描整个可预约窗口后发现原因——**周末档期提前三周以上就被订满了**：
+
+```
+月  0      火  0   ← 定休
+水 13  #############
+木 19  ###################
+金 19  ###################
+土  2  ##
+日  4  ####
+```
+
+那 6 个周末空位全在三周之后。窗口 14 天时根本够不到，等它进入窗口早已满档。
+所以 `horizon_days` 建议不低于 28，默认给的是 35。
 
 ## 它是怎么工作的
 
@@ -146,7 +177,8 @@ GET https://airrsv.net/k-one111/stateful/calendar/staff/searchStaffMenuResrc
 - 服务端会把请求窗口**夹到可预约期内**（请求 9/13 起的一周，实际返回 9/14–9/20），
   所以翻页游标按**实际返回的末日**推进，不能盲目按 7 天步进
 
-对站点的负担：默认配置下约 2 次请求/轮 × 96 轮/天 ≈ 200 次/天，请求之间间隔 1.5 秒。
+对站点的负担：默认配置下 5 次请求/轮（35 天 ÷ 7），一次 CI 触发连跑 8 轮 = 40 次，
+请求之间间隔 1.5 秒。按实测的触发频率算约 300~800 次/天。
 想再轻一点就调大 cron 间隔或调小 `horizon_days`。
 
 状态记在 [`state/seen.json`](state/seen.json)：同一个空位只提醒你一次
@@ -158,8 +190,11 @@ GET https://airrsv.net/k-one111/stateful/calendar/staff/searchStaffMenuResrc
 
 ## 两个已知的坑
 
-1. **定时有延迟。** GitHub 的 `schedule` 实际触发常晚 5~15 分钟（高峰更久）。
-   抢手档期可能慢半拍。要更准时（1 分钟级）可以把脚本搬到 Cloudflare Workers Cron。
+1. **GitHub 的定时任务被大幅节流。** 实测 100 次定时 run：配的是 `*/15`，
+   **实际平均间隔 289 分钟**（最短 133、最长 579），执行率只有约 5%。
+   现在的对策是两条：cron 调到 `*/5` 多申请一些（GitHub 按比例丢弃），以及
+   `--repeat 8 --interval 180` 让每次被叫醒的 run 覆盖约 24 分钟而不是一个瞬间。
+   要真正做到分钟级，得把脚本搬到 Cloudflare Workers Cron。
 2. **60 天后可能被自动停用。** GitHub 会把**仓库 60 天无活动**的定时工作流自动禁用。
    本项目的状态回写 commit 大概率能保活，但 GitHub 对机器人 commit 是否计入活动没有承诺。
    真被停了就去 **Actions → watch → Enable workflow** 点一下，或者随手推个 commit。

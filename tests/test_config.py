@@ -17,7 +17,9 @@ class TestLoadConfig(unittest.TestCase):
         """仓库里真实的 config.toml 必须能加载 —— 防止改坏了才在云端发现。"""
         cfg = config.load_config()
         self.assertTrue(cfg.watch.menus)
-        self.assertEqual(cfg.watch.weekdays, ["sat", "sun"])
+        self.assertTrue(cfg.watch.rules)
+        # 周末档期提前三周以上就满，窗口短于这个数等于白盯
+        self.assertGreaterEqual(cfg.watch.horizon_days, 28)
 
     def test_missing_file_falls_back_to_defaults(self):
         with tempfile.TemporaryDirectory() as d:
@@ -26,10 +28,42 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_partial_config_keeps_defaults(self):
         with tempfile.TemporaryDirectory() as d:
-            cfg = config.load_config(write(d, '[watch]\nhour_from = 12\n'))
-            self.assertEqual(cfg.watch.hour_from, 12)
-            self.assertEqual(cfg.watch.hour_to, 18)
+            cfg = config.load_config(write(d, '[watch]\nhorizon_days = 7\n'))
+            self.assertEqual(cfg.watch.horizon_days, 7)
+            self.assertEqual(cfg.watch.menus, ["s0000A5844"])
             self.assertEqual(cfg.notify.renotify_after_hours, 24)
+
+    def test_omitting_rules_uses_defaults(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config.load_config(write(d, '[watch]\nhorizon_days = 7\n'))
+            self.assertEqual(len(cfg.watch.rules), 2)
+
+    def test_rules_are_parsed(self):
+        toml = (
+            '[watch]\nhorizon_days = 21\n\n'
+            '[[watch.rules]]\nname = "只要周五傍晚"\n'
+            'weekdays = ["fri"]\nhour_from = 17\nhour_to = 18\n'
+        )
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config.load_config(write(d, toml))
+            self.assertEqual(len(cfg.watch.rules), 1)
+            r = cfg.watch.rules[0]
+            self.assertEqual(
+                (r.name, r.weekdays, r.hour_from, r.hour_to),
+                ("只要周五傍晚", ["fri"], 17, 18),
+            )
+
+    def test_empty_rules_list_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                config.load_config(write(d, '[watch]\nrules = []\n'))
+
+    def test_typo_inside_a_rule_is_rejected(self):
+        toml = '[watch]\n[[watch.rules]]\nweekday = ["fri"]\n'
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError) as ctx:
+                config.load_config(write(d, toml))
+            self.assertIn("weekday", str(ctx.exception))
 
     def test_typo_in_key_is_rejected(self):
         # 悄悄忽略拼错的键 = 你以为改了配置其实没生效
@@ -44,14 +78,16 @@ class TestLoadConfig(unittest.TestCase):
                 config.load_config(write(d, '[watch]\nmenus = []\n'))
 
     def test_inverted_hour_window_rejected(self):
+        toml = '[watch]\n[[watch.rules]]\nhour_from = 18\nhour_to = 10\n'
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError):
-                config.load_config(write(d, '[watch]\nhour_from = 18\nhour_to = 10\n'))
+                config.load_config(write(d, toml))
 
     def test_bad_weekday_rejected_at_load_time(self):
+        toml = '[watch]\n[[watch.rules]]\nweekdays = ["funday"]\n'
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError):
-                config.load_config(write(d, '[watch]\nweekdays = ["funday"]\n'))
+                config.load_config(write(d, toml))
 
     def test_zero_horizon_rejected(self):
         with tempfile.TemporaryDirectory() as d:
